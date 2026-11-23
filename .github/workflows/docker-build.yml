@@ -1,0 +1,16 @@
+name: Docker build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --pull --tag master-class-it-solutions:${{ github.sha }} .
