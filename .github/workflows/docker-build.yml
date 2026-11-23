@@ -14,3 +14,6 @@ jobs:
 
       - name: Build Docker image
         run: docker build --pull --tag master-class-it-solutions:${{ github.sha }} .
+
+      - name: Show built Docker image
+        run: docker image ls --filter "reference=master-class-it-solutions:${{ github.sha }}"
