@@ -10,6 +10,7 @@ A responsive static business website built with HTML, CSS and vanilla JavaScript
 - Mobile navigation menu
 - Contact form validation and email-draft preparation
 - Dockerfile and Docker Compose configuration
+- GitHub Actions builds the Docker image on pushes and pull requests
 
 ## Requirements
 
