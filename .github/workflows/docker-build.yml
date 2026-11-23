@@ -17,3 +17,18 @@ jobs:
 
       - name: Show built Docker image
         run: docker image ls --filter "reference=master-class-it-solutions:${{ github.sha }}"
+
+      - name: Start website container
+        run: docker run --detach --name master-class-it-solutions --publish 8088:80 master-class-it-solutions:${{ github.sha }}
+
+      - name: Verify website responds
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 2 http://localhost:8088/ |
+            grep -Fq '<title>Master Class IT Solutions | Technology That Works</title>'
+          echo "Website responded with the expected page."
+
+      - name: Show container status and logs
+        if: always()
+        run: |
+          docker ps -a --filter "name=master-class-it-solutions"
+          docker logs master-class-it-solutions
