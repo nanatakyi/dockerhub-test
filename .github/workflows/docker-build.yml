@@ -11,9 +11,17 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Validate static site files
+        run: |
+          test -s index.html
+          test -s styles.css
+          test -s script.js
+          grep -Fq '<title>Master Class IT Solutions | Technology That Works</title>' index.html
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -29,38 +37,111 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:latest
             ${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:${{ github.sha }}
 
-      - name: Start published image
-        run: docker run --detach --name docker-practice-lab-smoke-test --publish 8088:80 "${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:${{ github.sha }}"
-
-      - name: Verify site and show runner-local URL
+      - name: Deploy commit image to Render and verify health
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          RENDER_SERVICE_URL: ${{ vars.RENDER_SERVICE_URL }}
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 2 http://localhost:8088/ |
-            grep -Fq '<title>Master Class IT Solutions | Technology That Works</title>'
-          echo "Website responded with the expected page."
-          {
-            echo "## Container smoke test"
-            echo 'Runner-local URL: `http://localhost:8088/` (available only during this job).'
-            echo
-            echo "| Container | Image | Status |"
-            echo "| --- | --- | --- |"
-            docker ps --filter "name=docker-practice-lab-smoke-test" --format '| {{.Names}} | {{.Image}} | {{.Status}} |'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
 
-      - name: Show container status and logs
-        if: always()
-        run: |
-          docker ps -a --filter "name=docker-practice-lab-smoke-test"
-          if docker container inspect docker-practice-lab-smoke-test >/dev/null 2>&1; then
-            docker logs docker-practice-lab-smoke-test
+          for name in DOCKERHUB_USERNAME RENDER_API_KEY RENDER_SERVICE_ID RENDER_SERVICE_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required GitHub Actions configuration is missing: $name"
+              exit 1
+            fi
+          done
+
+          if [[ "$RENDER_SERVICE_URL" != https://* ]]; then
+            echo "::error::RENDER_SERVICE_URL must be the HTTPS URL of the Render web service."
+            exit 1
           fi
 
-      - name: Remove smoke-test container
-        if: always()
-        run: |
-          if docker container inspect docker-practice-lab-smoke-test >/dev/null 2>&1; then
-            docker rm --force docker-practice-lab-smoke-test
+          image_url="docker.io/${DOCKERHUB_USERNAME}/docker-practice-lab:${GITHUB_SHA}"
+          created_after="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          http_status="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer ${RENDER_API_KEY}" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -n --arg imageUrl "$image_url" '{imageUrl: $imageUrl}')" \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys")"
+
+          if [[ "$http_status" != 201 && "$http_status" != 202 ]]; then
+            cat "$response_file"
+            echo "::error::Render rejected the deployment request (HTTP $http_status)."
+            exit 1
           fi
+
+          deploy_id="$(jq -r '.id // empty' "$response_file")"
+          status=""
+          for attempt in {1..120}; do
+            if [[ -z "$deploy_id" ]]; then
+              recent_deploys="$(curl --fail --silent --show-error \
+                --header "Authorization: Bearer ${RENDER_API_KEY}" \
+                --get \
+                --data-urlencode 'limit=100' \
+                --data-urlencode "createdAfter=${created_after}" \
+                "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys")"
+              deploy_id="$(jq -r --arg image "$image_url" \
+                '[.[] | .deploy | select(.image.ref == $image)] | sort_by(.createdAt) | last | .id // empty' \
+                <<< "$recent_deploys")"
+            fi
+
+            if [[ -n "$deploy_id" ]]; then
+              deploy="$(curl --fail --silent --show-error \
+                --header "Authorization: Bearer ${RENDER_API_KEY}" \
+                "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${deploy_id}")"
+              status="$(jq -r '.status' <<< "$deploy")"
+              case "$status" in
+                live)
+                  deployed_image="$(jq -r '.image.ref // empty' <<< "$deploy")"
+                  if [[ "$deployed_image" != "$image_url" ]]; then
+                    echo "::error::Render reported a live deploy of an unexpected image."
+                    exit 1
+                  fi
+                  break
+                  ;;
+                build_failed|update_failed|canceled|pre_deploy_failed|deactivated)
+                  echo "::error::Render deployment failed with status: $status"
+                  exit 1
+                  ;;
+              esac
+              echo "Render deployment status: $status"
+            else
+              echo "Waiting for Render to register the requested deployment."
+            fi
+            sleep 10
+          done
+
+          if [[ "$status" != live ]]; then
+            echo "::error::Render deployment did not become live before timeout (last status: ${status:-unknown})."
+            exit 1
+          fi
+
+          health_url="${RENDER_SERVICE_URL%/}/"
+          healthy=false
+          for attempt in {1..30}; do
+            if page="$(curl --fail --silent --show-error --max-time 10 "$health_url")" &&
+              grep -Fq '<title>Master Class IT Solutions | Technology That Works</title>' <<< "$page"; then
+              healthy=true
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ "$healthy" != true ]]; then
+            echo "::error::Render deploy became live, but the website health check failed at the configured service URL."
+            exit 1
+          fi
+          echo "Render deployment is live and the website health check passed."

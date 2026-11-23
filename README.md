@@ -18,12 +18,21 @@ A responsive static business website built with HTML, CSS and vanilla JavaScript
 - Docker Desktop installed and running
 - Git Bash (recommended for the learning exercises)
 
-## GitHub Actions Docker publishing
+## GitHub Actions build, publish and Render deployment
 
-The workflow publishes `DOCKERHUB_USERNAME/docker-practice-lab` with `latest` and commit-SHA tags. In the GitHub repository, open **Settings → Secrets and variables → Actions** and add:
+On pushes to `main`, the workflow checks the static site files, builds a `linux/amd64` image, publishes `latest` and commit-SHA tags to Docker Hub, then deploys that exact SHA image to Render and checks that the public site responds.
 
-- Repository variable `DOCKERHUB_USERNAME` with your Docker Hub username
-- Repository secret `DOCKERHUB_TOKEN` with a Docker Hub access token that has read and write permissions
+Create an **image-backed Render Web Service** configured for `docker.io/<DOCKERHUB_USERNAME>/docker-practice-lab:latest`. If the Docker Hub repository is private, configure a Docker Hub registry credential for the Render service so it can pull images. Render requires the host, namespace, and repository to match when deploying a specific tag.
+
+In the GitHub repository, open **Settings → Secrets and variables → Actions** and configure:
+
+- Repository variable `DOCKERHUB_USERNAME` — your Docker Hub username
+- Repository secret `DOCKERHUB_TOKEN` — a Docker Hub access token with read and write permissions
+- Repository secret `RENDER_API_KEY` — a Render API key allowed to trigger and read service deploys
+- Repository variable `RENDER_SERVICE_ID` — the Render service ID
+- Repository variable `RENDER_SERVICE_URL` — the HTTPS URL of the Render web service, used for the post-deploy health check
+
+The workflow does not contain credential values. A missing or invalid Render setting, failed deployment, or unhealthy site causes the workflow to fail.
 
 ## Run with Docker Compose
 
