@@ -10,13 +10,20 @@ A responsive static business website built with HTML, CSS and vanilla JavaScript
 - Mobile navigation menu
 - Contact form validation and email-draft preparation
 - Dockerfile and Docker Compose configuration
-- GitHub Actions builds the Docker image on pushes and pull requests
+- GitHub Actions builds and pushes the Docker image to Docker Hub on pushes to `main`
 
 ## Requirements
 
 - Windows 10/11
 - Docker Desktop installed and running
 - Git Bash (recommended for the learning exercises)
+
+## GitHub Actions Docker publishing
+
+The workflow publishes `DOCKERHUB_USERNAME/docker-practice-lab` with `latest` and commit-SHA tags. In the GitHub repository, open **Settings → Secrets and variables → Actions** and add:
+
+- Repository variable `DOCKERHUB_USERNAME` with your Docker Hub username
+- Repository secret `DOCKERHUB_TOKEN` with a Docker Hub access token that has read and write permissions
 
 ## Run with Docker Compose
 
