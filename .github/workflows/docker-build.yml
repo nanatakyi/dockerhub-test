@@ -32,3 +32,35 @@ jobs:
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:latest
             ${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:${{ github.sha }}
+
+      - name: Start published image
+        run: docker run --detach --name docker-practice-lab-smoke-test --publish 8088:80 "${{ vars.DOCKERHUB_USERNAME }}/docker-practice-lab:${{ github.sha }}"
+
+      - name: Verify site and show runner-local URL
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 2 http://localhost:8088/ |
+            grep -Fq '<title>Master Class IT Solutions | Technology That Works</title>'
+          echo "Website responded with the expected page."
+          {
+            echo "## Container smoke test"
+            echo 'Runner-local URL: `http://localhost:8088/` (available only during this job).'
+            echo
+            echo "| Container | Image | Status |"
+            echo "| --- | --- | --- |"
+            docker ps --filter "name=docker-practice-lab-smoke-test" --format '| {{.Names}} | {{.Image}} | {{.Status}} |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show container status and logs
+        if: always()
+        run: |
+          docker ps -a --filter "name=docker-practice-lab-smoke-test"
+          if docker container inspect docker-practice-lab-smoke-test >/dev/null 2>&1; then
+            docker logs docker-practice-lab-smoke-test
+          fi
+
+      - name: Remove smoke-test container
+        if: always()
+        run: |
+          if docker container inspect docker-practice-lab-smoke-test >/dev/null 2>&1; then
+            docker rm --force docker-practice-lab-smoke-test
+          fi
